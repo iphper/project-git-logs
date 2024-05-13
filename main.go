@@ -32,6 +32,8 @@ var (
 	before = time.Now().Format("2006-01-02") + " 23:59:59"
 	// 日志文件句柄列表
 	logFiles []*os.File
+	// 日志文件列表
+	logPaths []string
 )
 
 // @func main
@@ -61,6 +63,9 @@ func main() {
 	// 日志后置内容写入
 	writeLogAfter()
 	bar.Finish()
+
+	// 后置操作
+	afterCommand()
 }
 
 // @func loadProjects
@@ -159,6 +164,7 @@ func initConfig() {
 		"filename":     "文件名格式",
 		"log_before":   "日志前置内容",
 		"log_after":    "日志后置内容",
+		"after_cmd":    "完成后执行命令操作",
 	}
 
 	var input string
@@ -293,7 +299,9 @@ func createAllLogFile() {
 		if !pathExists(dir) {
 			os.MkdirAll(dir, os.ModePerm)
 		}
-		file, err := os.Create(path.Join(dir, filename))
+		path := path.Join(dir, filename)
+		logPaths = append(logPaths, path)
+		file, err := os.Create(path)
 		if err != nil {
 			// 创建错误时跳过
 			fmt.Println(err)
@@ -393,5 +401,17 @@ func readProjectLog(project string) {
 func writeLog(log string) {
 	for _, file := range logFiles {
 		file.WriteString(log)
+	}
+}
+
+// @func afterCommand
+// @desc 后置操作
+// @param void
+// @return void
+func afterCommand() {
+	for _, cmd := range config["after_cmd"] {
+		for _, path := range logPaths {
+			exec.Command(cmd, path).Run()
+		}
 	}
 }
