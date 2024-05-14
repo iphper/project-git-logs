@@ -376,6 +376,9 @@ func readProjectLog(project string) {
 		logs[i], logs[j] = logs[j], logs[i]
 	}
 
+	// 防止重复
+	history := make(map[string]uint, len(logs))
+
 	// 遍历
 	for _, line := range logs {
 		line = strings.Replace(line, "feat:", "", 1)
@@ -387,6 +390,11 @@ func readProjectLog(project string) {
 			if len(item) == 0 {
 				continue
 			}
+			if history[item] > 0 {
+				history[item]++
+				continue
+			}
+			history[item] = 1
 			writeLog(fmt.Sprintf("%3d、[%v] %v\n", logIdenxNO, name, item))
 			logIdenxNO++
 		}
