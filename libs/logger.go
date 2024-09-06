@@ -50,8 +50,11 @@ var (
 // @return void
 func CreateAllLogFile() {
 	filename := strings.Join(Config["filename"], "") + ".txt"
+
+	// 文件名以结束日期为准
+	realTime, _ := time.ParseInLocation("2006-01-02", before, time.Local)
 	for _, dir := range Config["log_root"] {
-		dir = path.Join(dir, time.Now().Format("2006-01"))
+		dir = path.Join(dir, realTime.Format("2006-01"))
 		// 没有目录则创建
 		if !PathExists(dir) {
 			os.MkdirAll(dir, os.ModePerm)

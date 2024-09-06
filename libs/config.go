@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // 常量
@@ -180,19 +181,13 @@ func GetProjectList() map[string]uint {
 // @param void
 // @return void
 func ConfigPlaceholder() {
+	// 文件名以结束日期为准
+	realTime, _ := time.ParseInLocation("2006-01-02", before, time.Local)
 
 	// 配置占位符转化
 	for field, values := range Config {
 		for idx, value := range values {
-			switch true {
-			// 时间日期点位符转化
-			case strings.Contains(value, "$DATE"):
-				Config[field][idx] = strings.ReplaceAll(value, "$DATE", DateFormat())
-			case strings.Contains(value, "$TIME"):
-				Config[field][idx] = strings.ReplaceAll(value, "$DATE", TimeFormat())
-			case strings.Contains(value, "$DATETIME"):
-				Config[field][idx] = strings.ReplaceAll(value, "$DATE", DateTimeFormat())
-			}
+			Config[field][idx] = replacePlaceholder(value, realTime)
 		}
 	}
 }
@@ -235,4 +230,17 @@ func InputTimes() {
 			break
 		}
 	}
+}
+
+func replacePlaceholder(value string, times ...time.Time) string {
+	switch true {
+	// 时间日期点位符转化
+	case strings.Contains(value, "$DATE"):
+		return strings.ReplaceAll(value, "$DATE", DateFormat(times...))
+	case strings.Contains(value, "$TIME"):
+		return strings.ReplaceAll(value, "$DATE", TimeFormat(times...))
+	case strings.Contains(value, "$DATETIME"):
+		return strings.ReplaceAll(value, "$DATE", DateTimeFormat(times...))
+	}
+	return value
 }
