@@ -1,3 +1,4 @@
 *.exe
 *.log
 weeker.conf
+config.data
