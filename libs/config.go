@@ -198,6 +198,14 @@ func ConfigPlaceholder() {
 // @return void
 func InputTimes() {
 
+	args := os.Args[1:]
+	argLen := len(args)
+	if argLen > 0 {
+		args = append(args[:argLen], []string{after, before}[argLen:2]...)
+		after, before = args[0], args[1]
+		return
+	}
+
 	var input string
 	// 获取获取开始日期
 	for {
