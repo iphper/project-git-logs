@@ -6,5 +6,5 @@ var (
 	once      sync.Once
 	group     sync.WaitGroup
 	app       *gitLog
-	writeChan = make(chan []string, 1)
+	writeChan = make(chan []string, 1024)
 )

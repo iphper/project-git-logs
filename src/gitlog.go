@@ -23,6 +23,8 @@ type gitLog struct {
 	list []string
 	// 进度条
 	bar *progressbar.ProgressBar
+	// 参数
+	args []string
 }
 
 // 流程
@@ -56,8 +58,11 @@ func (app *gitLog) initialize() {
 		"--no-merges",
 		"--all",
 		"--author",
-		command("git", "config", "user.name"),
+		command("git", "config", "user.email"), // email比name更准确
 	}
+
+	// 记录参数
+	app.args = os.Args[1:]
 
 }
 
@@ -82,49 +87,8 @@ func (app *gitLog) before() {
 // 3.1、每获获取一个项目目录均开启一个协程读取日志
 // 3.2、开启一个协程写入日志[日志文件为当天日期]
 func (app *gitLog) run() {
-	var err error
-
-	// 默认日期范围
-	def := []string{
-		time.Now().AddDate(0, 0, -int(time.Now().Weekday()-time.Monday)).Format("2006-01-02"),
-		time.Now().Format("2006-01-02"),
-	}
-
-	// 开始日期[周一]
-	input := ""
-	// 获取获取开始日期
-	for {
-		fmt.Printf("请输入读取提交日志的开始时间[%v]:", def[0])
-		fmt.Scanln(&input)
-		if input != "" {
-			if _, err = time.Parse("2006-01-02", input); err != nil {
-				app.config["logcmd"] = append(app.config["logcmd"], "--after", "'"+input[:10]+" 00:00:00'")
-				break
-			}
-			fmt.Println("输入的日期格式不正确")
-		} else {
-			app.config["logcmd"] = append(app.config["logcmd"], "--after", "'"+def[0]+" 00:00:00'")
-			break
-		}
-	}
-
-	// 结束日期[当天]
-	input = ""
-	// 获取获取结束日期
-	for {
-		fmt.Printf("请输入读取提交日志的结束时间[%v]:", def[1])
-		fmt.Scanln(&input)
-		if input != "" {
-			if _, err = time.Parse("2006-01-02", input); err != nil {
-				app.config["logcmd"] = append(app.config["logcmd"], "--before", "'"+input[:10]+" 23:59:59'")
-				break
-			}
-			fmt.Println("输入的日期格式不正确")
-		} else {
-			app.config["logcmd"] = append(app.config["logcmd"], "--before", "'"+def[1]+" 23:59:59'")
-			break
-		}
-	}
+	// 获取日期范围
+	app.getRangeDate()
 
 	// 总进度
 	app.bar = progressbar.Default(int64(len(app.list)))
@@ -181,7 +145,8 @@ func (app *gitLog) readLog(logpath string) {
 	defer group.Done()
 	defer app.bar.Add(1)
 
-	app.bar.Describe(fmt.Sprintf("正在获取<%v>项目提交日志", logpath))
+	productName := path.Base(logpath)
+	app.bar.Describe(fmt.Sprintf("正在获取<%v>项目提交日志", productName))
 
 	// 获取提交日志
 	log := pathCmd(logpath, "git", app.config["logcmd"]...)
@@ -195,6 +160,8 @@ func (app *gitLog) readLog(logpath string) {
 		logs[i], logs[j] = logs[j], logs[i]
 	}
 
+	exists := map[string]int{}
+
 	for _, line := range logs {
 		// 跳过空行
 		if len(line) <= 0 {
@@ -202,8 +169,74 @@ func (app *gitLog) readLog(logpath string) {
 		}
 
 		lineArr := strings.Split(line, " ")
+		line = lineArr[len(lineArr)-1]
 
-		writeChan <- []string{path.Base(logpath), lineArr[len(lineArr)-1]}
+		// 过滤重置行
+		if _, ok := exists[line]; ok {
+			continue
+		}
+		exists[line] = 1
+
+		writeChan <- []string{productName, line}
+	}
+
+}
+
+// 参数可携带日期范围[开始时间、结束时间]
+func (app *gitLog) getRangeDate() {
+
+	// 默认日期范围
+	dateRange := []string{
+		time.Now().AddDate(0, 0, -int(time.Now().Weekday()-time.Monday)).Format("2006-01-02"),
+		time.Now().Format("2006-01-02"),
+	}
+
+	var err error
+
+	argLen := len(app.args)
+	// 无参数时
+	if argLen == 0 {
+		// 开始日期[周一]
+		input := ""
+		// 获取获取开始日期
+		for {
+			fmt.Printf("请输入读取提交日志的开始时间[%v]:", dateRange[0])
+			fmt.Scanln(&input)
+			if input != "" {
+				if _, err = time.Parse("2006-01-02", input); err == nil {
+					dateRange[0] = input
+					break
+				}
+				fmt.Println("输入的日期格式不正确")
+			} else {
+				break
+			}
+		}
+
+		// 结束日期[当天]
+		input = ""
+		// 获取获取结束日期
+		for {
+			fmt.Printf("请输入读取提交日志的结束时间[%v]:", dateRange[1])
+			fmt.Scanln(&input)
+			if input != "" {
+				if _, err = time.Parse("2006-01-02", input); err == nil {
+					dateRange[1] = input
+					break
+				}
+				fmt.Println("输入的日期格式不正确")
+			} else {
+				break
+			}
+		}
+	} else {
+		// 合并
+		dateRange = append(app.args[:argLen], dateRange[argLen:2]...)
+	}
+
+	// 添加时间范围参数
+	for i, key := range []string{"--after", "--before"} {
+		app.config["logcmd"] = append(app.config["logcmd"], key, "'"+dateRange[i][:10]+" 00:00:00'")
 	}
 
 }
