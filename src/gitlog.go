@@ -245,7 +245,7 @@ func (app *gitLog) getRangeDate() {
 func init() {
 	once.Do(func() {
 		app = &gitLog{
-			conf:   "config.data",
+			conf:   "config.conf",
 			config: map[string][]string{},
 		}
 
