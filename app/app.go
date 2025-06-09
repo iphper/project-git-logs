@@ -38,7 +38,7 @@ func (a *App) Error(err error) {
 func (a *App) Start() {
 	// 启动前的准备工作
 	before := a.cmd.GetOption("before")
-	date := utils.GetWeekStartDate()
+	date := utils.GetWeekStartDate() + " 00:00:00"
 	if before == nil {
 		before = utils.Scan("请输入提交日期范围的起始日期["+date+"]: ", date)
 		if !utils.IsValidDate(before.(string)) {
@@ -50,7 +50,7 @@ func (a *App) Start() {
 	// 获取提交日期范围
 	after := a.cmd.GetOption("after")
 	if after == nil {
-		date = utils.GetTodayDate()
+		date = utils.GetTodayDate() + " 23:59:59"
 		after = utils.Scan("请输入提交日期范围的结束日期["+date+"]: ", date)
 		if !utils.IsValidDate(after.(string)) {
 			after = date
