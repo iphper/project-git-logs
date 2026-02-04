@@ -95,7 +95,8 @@ func (m *Progress) View() string {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(time.Second*1, func(t time.Time) tea.Msg {
+	// 10毫秒刷新一次
+	return tea.Tick(time.Millisecond*10, func(t time.Time) tea.Msg {
 		// 等待调用
 		return tickMsg(t)
 	})
