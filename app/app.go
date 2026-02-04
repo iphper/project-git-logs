@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"project-git-logs/module"
 	"project-git-logs/utils"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -23,13 +24,12 @@ type Application struct {
 	date    []string            // 日期范围
 	logChan chan LogMsg         // 日志记录通道
 	history map[string]struct{} // 历史记录
-	stop    chan struct{}       // 停止信号
+	process int                 // 进程数据
 }
 
 // 初始化方法
 func (app *Application) Init() {
 	app.logChan = make(chan LogMsg, 10)
-	app.stop = make(chan struct{})
 	app.history = map[string]struct{}{}
 
 	// 获取当前目录
@@ -45,7 +45,7 @@ func (app *Application) Init() {
 
 // 初始化目录
 func (app *Application) initDir() {
-	app.dir = utils.Cmd("pwd")
+	app.dir, _ = os.Getwd()
 }
 
 // 初始化git配置
@@ -99,9 +99,12 @@ func (app *Application) initDateRange() {
 func (app *Application) worker(repo string, progress *module.Progress) {
 	defer func() {
 		wg.Done()
+		app.process-- // 完成后更新计数
 		progress.Add(1)
 	}()
 	repo = strings.TrimSpace(repo)
+	// 适配win环境下的路径【path.Base在win下会将绝对路径当作仓库名称】
+	repo = strings.ReplaceAll(repo, "\\", "/")
 	repository := path.Base(repo)
 	app.logChan <- LogMsg{
 		name: repository,
@@ -122,21 +125,7 @@ func (app *Application) worker(repo string, progress *module.Progress) {
 func (app *Application) writeWorker() {
 	defer wg.Done()
 
-	// 获取当前可执行文件所处目录
-	exePath, err := os.Executable()
-	if err != nil {
-		panic(err)
-	}
-
-	// 真实路径（处理符号链接）
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		panic(err)
-	}
-
-	exeDir := filepath.Dir(exePath)
-
-	logFile := filepath.Join(exeDir, time.Now().Format("2006-01/02")+".log")
+	logFile := filepath.Join(app.getExetPath(), time.Now().Format("2006-01/02")+".log")
 
 	// 判断目录是否存在
 	dir := path.Dir(logFile)
@@ -180,47 +169,82 @@ func (app *Application) writeWorker() {
 		}
 	}
 
-	// 记录日志
-	for {
-		select {
-		case <-app.stop: // 结束信号
-			// 判断是否还有未写入的日志
-			for len(app.logChan) > 0 {
-				logMsg := <-app.logChan
-				fn(logMsg.name, logMsg.log)
-			}
-			// 完成日志读取
-			close(app.logChan)
-			// 打开文件
-			utils.Cmd("wsl.exe", "Code", logFile)
-			return
-		case logMsg, ok := <-app.logChan:
-			if !ok {
-				break
-			}
+	// 退出函数处理
+	exitFn := func() {
+		// 判断是否还有未写入的日志
+		for len(app.logChan) > 0 {
+			logMsg := <-app.logChan
 			fn(logMsg.name, logMsg.log)
 		}
+		// 完成日志读取
+		close(app.logChan)
+		// 打开文件
+		app.open(logFile)
+	}
+
+	// 记录日志
+	for {
+		if app.process <= 0 {
+			exitFn()
+			break
+		}
+		logMsg, ok := <-app.logChan
+		if !ok {
+			break
+		}
+		fn(logMsg.name, logMsg.log)
+	}
+}
+
+// 获取当前可执行程序路径
+func (app *Application) getExetPath() string {
+	// 获取当前可执行文件所处目录
+	exePath, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+
+	// 真实路径（处理符号链接）
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		panic(err)
+	}
+
+	return filepath.Dir(exePath)
+}
+
+// 根据不同系统环境使用不同的命令进行打开
+func (app *Application) open(logFile string) {
+
+	// 如果是windows系统
+	if runtime.GOOS == "windows" {
+		// 打开文件
+		utils.Cmd("Code", logFile)
+	} else {
+		// 打开文件
+		utils.Cmd("wsl.exe", "Code", logFile)
 	}
 }
 
 // Run 启动应用程序
 func (app *Application) Run() {
-	// waitgroup
-
-	app.Init() // 初始化
+	// 初始化
+	app.Init()
 
 	// 获取项目列表
 	repos := utils.GitRepositories(strings.TrimSpace(app.dir))
-	reposLen := len(repos)
+	app.process = len(repos)
 
 	// 创建进度条
-	progress := module.NewProgress().SetCount(float64(reposLen))
+	progress := module.NewProgress(float64(app.process))
 
-	wg.Add(2 + reposLen)
+	// 等待组协程数
+	wg.Add(2 + app.process)
+
+	// 进度条
 	go func() {
 		defer wg.Done()
 		progress.Run()
-		app.stop <- struct{}{}
 	}()
 
 	// 启动一个协程记录日志

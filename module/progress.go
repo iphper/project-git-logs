@@ -36,10 +36,12 @@ type Progress struct {
 	current  float64
 }
 
-func NewProgress() *Progress {
-	return &Progress{
+func NewProgress(count float64) *Progress {
+	p := &Progress{
 		progress: progress.New(progress.WithDefaultGradient()),
+		count:    count,
 	}
+	return p
 }
 
 func (m *Progress) SetCount(count float64) *Progress {
