@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // 日志消息类型
@@ -32,6 +35,9 @@ func (app *Application) Init() {
 	app.logChan = make(chan LogMsg, 10)
 	app.history = map[string]struct{}{}
 
+	// 初始化debug
+	app.initDebug()
+
 	// 获取当前目录
 	app.initDir()
 
@@ -41,6 +47,12 @@ func (app *Application) Init() {
 	// 初始化日期范围
 	app.initDateRange()
 
+}
+
+func (app *Application) initDebug() {
+	debugFile := filepath.Join(app.getExetPath(), runtime.GOOS+".debug.log")
+	f, _ := os.OpenFile(debugFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	logrus.SetOutput(io.MultiWriter(f))
 }
 
 // 初始化目录
@@ -68,7 +80,14 @@ func (app *Application) initDateRange() {
 	// 默认日期范围
 	defRange := begin + "~" + end
 
-	dateRange := module.NewInput(fmt.Sprintf("日期范围[%s]：", defRange))
+	dateRange := ""
+
+	// 默认为第一个参数
+	if l := len(os.Args); l > 1 {
+		dateRange = os.Args[1]
+	} else {
+		dateRange = module.NewInput(fmt.Sprintf("日期范围[%s]：", defRange))
+	}
 	if dateRange == "" {
 		dateRange = defRange
 	}
@@ -99,9 +118,11 @@ func (app *Application) initDateRange() {
 func (app *Application) worker(repo string, progress *module.Progress) {
 	defer func() {
 		wg.Done()
+		app.debug(repo, "完成")
 		app.process-- // 完成后更新计数
 		progress.Add(1)
 	}()
+	app.debug(repo, "开始")
 	repo = strings.TrimSpace(repo)
 	// 适配win环境下的路径【path.Base在win下会将绝对路径当作仓库名称】
 	repo = strings.ReplaceAll(repo, "\\", "/")
@@ -188,11 +209,15 @@ func (app *Application) writeWorker() {
 			exitFn()
 			break
 		}
-		logMsg, ok := <-app.logChan
-		if !ok {
-			break
+		select {
+		case logMsg, ok := <-app.logChan:
+			if !ok {
+				break
+			}
+			fn(logMsg.name, logMsg.log)
+		case <-time.After(time.Millisecond * 50): // 超时跳过防止等待太久
+			//app.debug("50ms jump")
 		}
-		fn(logMsg.name, logMsg.log)
 	}
 }
 
@@ -215,46 +240,61 @@ func (app *Application) getExetPath() string {
 
 // 根据不同系统环境使用不同的命令进行打开
 func (app *Application) open(logFile string) {
-
 	// 如果是windows系统
 	if runtime.GOOS == "windows" {
-		// 打开文件
-		utils.Cmd("Code", logFile)
+		// 以非阻塞方式打开文件
+		utils.SyncCmd("Code", logFile)
 	} else {
-		// 打开文件
-		utils.Cmd("wsl.exe", "Code", logFile)
+		// 以非阻塞方式通过 wsl 启动
+		utils.SyncCmd("wsl.exe", "Code", logFile)
 	}
+}
+
+// debug记录
+func (app *Application) debug(info ...any) {
+	// 调试时打开
+	// logrus.Info(info...)
 }
 
 // Run 启动应用程序
 func (app *Application) Run() {
+	begin := time.Now().Unix()
+
 	// 初始化
 	app.Init()
+	app.debug("------初始化完成------")
 
 	// 获取项目列表
 	repos := utils.GitRepositories(strings.TrimSpace(app.dir))
 	app.process = len(repos)
+	app.debug("------获取仓库列表完成------")
 
 	// 创建进度条
 	progress := module.NewProgress(float64(app.process))
+	app.debug("------进度条初始化完成------")
 
 	// 等待组协程数
-	wg.Add(2 + app.process)
+	wg.Add(1 + app.process)
 
 	// 进度条
 	go func() {
+		app.debug("------进度条协程启动------")
 		defer wg.Done()
 		progress.Run()
+		app.debug("------进度条协程完成------")
 	}()
 
 	// 启动一个协程记录日志
 	go app.writeWorker()
+	app.debug("------写入协程初始化完成------")
 
 	// 单独起协程处理一个仓库
 	for _, rep := range repos {
 		go app.worker(rep, progress)
 	}
+	app.debug("------所有仓库协程启动完成------")
 
 	// 等待协程结束
 	wg.Wait()
+	app.debug(fmt.Sprintf("执行时间：%vS", time.Now().Unix()-begin))
 }

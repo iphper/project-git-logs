@@ -29,3 +29,9 @@ func PathCmd(path string, cmd string, args ...string) string {
 	}
 	return string(output)
 }
+
+// 以非阻塞方式执行命令
+func SyncCmd(cmd string, args ...string) {
+	// 以非阻塞方式打开文件
+	exec.Command(cmd, args...).Start()
+}
