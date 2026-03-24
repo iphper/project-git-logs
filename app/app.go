@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"project-git-logs/module"
 	"project-git-logs/utils"
@@ -33,6 +32,17 @@ type Application struct {
 
 // 应用执行方法
 func (app *Application) Run() {
+
+	defer func() {
+		if a := recover(); a != nil {
+			r := []byte{}
+			n := runtime.Stack(r, true)
+			fmt.Printf("panic: %v\nstack: %s\n", a, string(r[:n]))
+			fmt.Println("发生错误：", a)
+			os.Exit(1)
+		}
+	}()
+
 	app.Init()
 
 	app.Worker()
@@ -121,7 +131,7 @@ func (app *Application) Read(repo string) {
 	repo = strings.TrimSpace(repo)
 	// 适配win环境下的路径【path.Base在win下会将绝对路径当作仓库名称】
 	repo = strings.ReplaceAll(repo, "\\", "/")
-	repository := path.Base(repo)
+	repository := filepath.Base(repo)
 	app.logChan <- LogMsg{
 		name: repository,
 		log: utils.PathCmd(
@@ -144,7 +154,7 @@ func (app *Application) Write() {
 	app.logFile = filepath.Join(app.binRoot, time.Now().Format("2006-01/02")+".log")
 
 	// 判断目录是否存在
-	dir := path.Dir(app.logFile)
+	dir := filepath.Dir(app.logFile)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		os.Mkdir(dir, 0755)
 	}
