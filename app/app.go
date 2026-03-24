@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -11,8 +10,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // 日志消息类型
@@ -21,60 +18,60 @@ type LogMsg struct {
 	log  string // 日志记录
 }
 
+// Application 应用
 type Application struct {
-	user    string              // 获取提交用户信息
-	dir     string              // 读取日志的目录
-	date    []string            // 日期范围
-	logChan chan LogMsg         // 日志记录通道
-	history map[string]struct{} // 历史记录
-	process int                 // 进程数据
+	gitUser  string              // 获取提交用户信息
+	root     string              // 读取日志的目录
+	binRoot  string              // 可执行文件目录
+	date     []string            // 日期范围
+	logChan  chan LogMsg         // 日志记录通道
+	history  map[string]struct{} // 历史记录
+	process  int                 // 进程数据
+	progress *module.Progress    // 进度条
+	logFile  string              // 日志文件路径
 }
 
-// 初始化方法
+// 应用执行方法
+func (app *Application) Run() {
+	app.Init()
+
+	app.Worker()
+
+	app.AfterWorker()
+}
+
+// 初始化
 func (app *Application) Init() {
+	// 初始化日志通道和历史记录
 	app.logChan = make(chan LogMsg, 10)
 	app.history = map[string]struct{}{}
 
-	// 初始化debug
-	app.initDebug()
-
 	// 获取当前目录
-	app.initDir()
+	app.root, _ = os.Getwd()
+	// 获取当前可执行文件所处目录
+	exePath, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+
+	// 真实路径（处理符号链接）
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		panic(err)
+	}
+	// 可执行文件目录
+	app.binRoot = filepath.Dir(exePath)
 
 	// 初始化git配置信息
-	app.initGitConfig()
-
-	// 初始化日期范围
-	app.initDateRange()
-
-}
-
-func (app *Application) initDebug() {
-	debugFile := filepath.Join(app.getExetPath(), runtime.GOOS+".debug.log")
-	f, _ := os.OpenFile(debugFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
-	logrus.SetOutput(io.MultiWriter(f))
-}
-
-// 初始化目录
-func (app *Application) initDir() {
-	app.dir, _ = os.Getwd()
-}
-
-// 初始化git配置
-func (app *Application) initGitConfig() {
-	// 获取git配置信息
-	app.user = strings.ReplaceAll(utils.GitGlobalUserName(), "\n", "")
-	if app.user == "" {
-		app.user = module.NewInput("用户名：")
+	app.gitUser = strings.ReplaceAll(utils.GitGlobalUserName(), "\n", "")
+	if app.gitUser == "" {
+		app.gitUser = module.NewInput("用户名：")
 	}
-	if app.user == "" {
+	if app.gitUser == "" {
 		// 需要从终端获取
 		panic("获取日志信息失败；读取不到提交用户信息")
 	}
-}
 
-// 初始化日期范围
-func (app *Application) initDateRange() {
 	begin := utils.GetWeekStartDate()
 	end := utils.GetTodayDate()
 	// 默认日期范围
@@ -114,15 +111,13 @@ func (app *Application) initDateRange() {
 
 }
 
-// 日志读取
-func (app *Application) worker(repo string, progress *module.Progress) {
+// 读取
+func (app *Application) Read(repo string) {
 	defer func() {
-		wg.Done()
-		app.debug(repo, "完成")
+		app.progress.Add(1)
 		app.process-- // 完成后更新计数
-		progress.Add(1)
+		wg.Done()
 	}()
-	app.debug(repo, "开始")
 	repo = strings.TrimSpace(repo)
 	// 适配win环境下的路径【path.Base在win下会将绝对路径当作仓库名称】
 	repo = strings.ReplaceAll(repo, "\\", "/")
@@ -135,26 +130,26 @@ func (app *Application) worker(repo string, progress *module.Progress) {
 			"log",
 			"--pretty=format:%s",
 			"--no-merges",
-			"--author", app.user,
+			"--author", app.gitUser,
 			"--after", app.date[0]+" 00:00:00",
 			"--before", app.date[1]+" 23:59:59",
 		),
 	}
 }
 
-// 日志写入
-func (app *Application) writeWorker() {
+// 写入
+func (app *Application) Write() {
 	defer wg.Done()
 
-	logFile := filepath.Join(app.getExetPath(), time.Now().Format("2006-01/02")+".log")
+	app.logFile = filepath.Join(app.binRoot, time.Now().Format("2006-01/02")+".log")
 
 	// 判断目录是否存在
-	dir := path.Dir(logFile)
+	dir := path.Dir(app.logFile)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		os.Mkdir(dir, 0755)
 	}
 
-	fp, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	fp, err := os.OpenFile(app.logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		panic(err)
 	}
@@ -199,8 +194,6 @@ func (app *Application) writeWorker() {
 		}
 		// 完成日志读取
 		close(app.logChan)
-		// 打开文件
-		app.open(logFile)
 	}
 
 	// 记录日志
@@ -216,85 +209,45 @@ func (app *Application) writeWorker() {
 			}
 			fn(logMsg.name, logMsg.log)
 		case <-time.After(time.Millisecond * 50): // 超时跳过防止等待太久
-			//app.debug("50ms jump")
+			// fmt.Println("等待...")
 		}
 	}
 }
 
-// 获取当前可执行程序路径
-func (app *Application) getExetPath() string {
-	// 获取当前可执行文件所处目录
-	exePath, err := os.Executable()
-	if err != nil {
-		panic(err)
+// Worker
+func (app *Application) Worker() {
+
+	// 读取所有git仓库
+	repos := utils.GitRepositories(strings.TrimSpace(app.root))
+	app.process = len(repos)
+
+	// 开启进度条
+	app.progress = module.NewProgress(float64(app.process))
+	wg.Add(2 + app.process) // 2个协程 + 每个仓库一个协程
+	go func() {
+		defer wg.Done()
+		app.progress.Run()
+	}()
+
+	// 开启写入任务
+	go app.Write()
+
+	// 开始读取任务
+	for _, repo := range repos {
+		go app.Read(repo)
 	}
 
-	// 真实路径（处理符号链接）
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		panic(err)
-	}
-
-	return filepath.Dir(exePath)
+	wg.Wait()
 }
 
-// 根据不同系统环境使用不同的命令进行打开
-func (app *Application) open(logFile string) {
+// Worker结束后的处理
+func (app *Application) AfterWorker() {
 	// 如果是windows系统
 	if runtime.GOOS == "windows" {
 		// 以非阻塞方式打开文件
-		utils.SyncCmd("Code", logFile)
+		utils.SyncCmd("Code", app.logFile)
 	} else {
 		// 以非阻塞方式通过 wsl 启动
-		utils.SyncCmd("wsl.exe", "Code", logFile)
+		utils.SyncCmd("wsl.exe", "Code", app.logFile)
 	}
-}
-
-// debug记录
-func (app *Application) debug(info ...any) {
-	// 调试时打开
-	// logrus.Info(info...)
-}
-
-// Run 启动应用程序
-func (app *Application) Run() {
-	begin := time.Now().Unix()
-
-	// 初始化
-	app.Init()
-	app.debug("------初始化完成------")
-
-	// 获取项目列表
-	repos := utils.GitRepositories(strings.TrimSpace(app.dir))
-	app.process = len(repos)
-	app.debug("------获取仓库列表完成------")
-
-	// 创建进度条
-	progress := module.NewProgress(float64(app.process))
-	app.debug("------进度条初始化完成------")
-
-	// 等待组协程数
-	wg.Add(1 + app.process)
-
-	// 进度条
-	go func() {
-		app.debug("------进度条协程启动------")
-		defer wg.Done()
-		progress.Run()
-		app.debug("------进度条协程完成------")
-	}()
-
-	// 启动一个协程记录日志
-	go app.writeWorker()
-	app.debug("------写入协程初始化完成------")
-
-	// 单独起协程处理一个仓库
-	for _, rep := range repos {
-		go app.worker(rep, progress)
-	}
-	app.debug("------所有仓库协程启动完成------")
-
-	// 等待协程结束
-	wg.Wait()
-	app.debug(fmt.Sprintf("执行时间：%vS", time.Now().Unix()-begin))
 }

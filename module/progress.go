@@ -17,17 +17,6 @@ import (
 
 var helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render
 
-// func main() {
-// 	m := Progress{
-// 		progress: progress.New(progress.WithDefaultGradient()),
-// 	}
-
-// 	if _, err := tea.NewProgram(m).Run(); err != nil {
-// 		fmt.Println("Oh no!", err)
-// 		os.Exit(1)
-// 	}
-// }
-
 type tickMsg time.Time
 
 type Progress struct {
